@@ -1,16 +1,12 @@
-import time
 import subprocess
 import os
+import threading
+import queue
 
 # This import is unused in this file. It will be deleted in future (W0611 PEP8),
 # but for the momment we keep it due to yunohost moulinette script that used
 # process.quote syntax to access this module !
-try:
-    from pipes import quote  # Python2 & Python3 <= 3.2
-except ImportError:
-    from shlex import quote  # Python3 >= 3.3
-
-from .stream import LogPipe
+from shlex import quote
 
 quote  # This line is here to avoid W0611 PEP8 error (see comments above)
 
@@ -63,9 +59,11 @@ def call_async_output(args, callback, **kwargs):
         if a in kwargs:
             raise ValueError("%s argument not allowed, " "it will be overridden." % a)
 
-    kwargs["stdout"] = LogPipe(callback[0])
-    kwargs["stderr"] = LogPipe(callback[1])
-    stdinfo = LogPipe(callback[2]) if len(callback) >= 3 else None
+    log_queue = queue.Queue()
+
+    kwargs["stdout"] = LogPipe(callback[0], log_queue)
+    kwargs["stderr"] = LogPipe(callback[1], log_queue)
+    stdinfo = LogPipe(callback[2], log_queue) if len(callback) >= 3 else None
     if stdinfo:
         kwargs["pass_fds"] = [stdinfo.fdWrite]
         if "env" not in kwargs:
@@ -73,29 +71,57 @@ def call_async_output(args, callback, **kwargs):
         kwargs["env"]["YNH_STDINFO"] = str(stdinfo.fdWrite)
 
     try:
-        with subprocess.Popen(args, **kwargs) as p:
-            kwargs["stdout"].close()
-            kwargs["stderr"].close()
-            if stdinfo:
-                stdinfo.close()
-    except TypeError:
+        p = subprocess.Popen(args, **kwargs)
+
+        while p.poll() is None:
+
+            while True:
+                try:
+                    callback, message = log_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+                callback(message)
+    finally:
         kwargs["stdout"].close()
         kwargs["stderr"].close()
         if stdinfo:
             stdinfo.close()
-        raise
-
-    # on slow hardware, in very edgy situations it is possible that the process
-    # isn't finished just after having closed stdout and stderr, so we wait a
-    # bit to give hime the time to finish (while having a timeout)
-    # Note : p.poll() returns None is the process hasn't finished yet
-    start = time.time()
-    while time.time() - start < 10:
-        if p.poll() is not None:
-            return p.poll()
-        time.sleep(0.1)
 
     return p.poll()
+
+
+class LogPipe(threading.Thread):
+    # Adapted from https://codereview.stackexchange.com/a/17959
+    def __init__(self, log_callback, queue):
+        """Setup the object with a logger and a loglevel
+        and start the thread
+        """
+        threading.Thread.__init__(self)
+        self.daemon = False
+        self.log_callback = log_callback
+
+        self.fdRead, self.fdWrite = os.pipe()
+        self.pipeReader = os.fdopen(self.fdRead)
+
+        self.queue = queue
+
+        self.start()
+
+    def fileno(self):
+        """Return the write file descriptor of the pipe"""
+        return self.fdWrite
+
+    def run(self):
+        """Run the thread, logging everything."""
+        for line in iter(self.pipeReader.readline, ""):
+            self.queue.put((self.log_callback, line.strip("\n")))
+
+        self.pipeReader.close()
+
+    def close(self):
+        """Close the write end of the pipe."""
+        os.close(self.fdWrite)
 
 
 # Call multiple commands -----------------------------------------------
