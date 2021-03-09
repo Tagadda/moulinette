@@ -35,7 +35,7 @@ def main():
 
     """
     with open('action_map.yml') as f:
-        action_map = yaml.load(f)
+        action_map = yaml.safe_load(f)
 
     try:
         with open('/etc/yunohost/current_host', 'r') as f:
@@ -44,7 +44,7 @@ def main():
         domain = requests.get('http://ip.yunohost.org').text
 
     with open('action_map.yml') as f:
-        action_map = yaml.load(f)
+        action_map = yaml.safe_load(f)
 
     resource_list = {
         'apiVersion': __version__,

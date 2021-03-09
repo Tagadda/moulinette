@@ -33,7 +33,7 @@ def main():
 
     """
     with open('action_map.yml') as f:
-        action_map = yaml.load(f)
+        action_map = yaml.safe_load(f)
 
     resources = {}
 
