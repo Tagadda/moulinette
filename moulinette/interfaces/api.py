@@ -341,9 +341,9 @@ class _ActionsMapPlugin(object):
             for a in args:
                 params[a] = True
             # Append other request params
-            req_params = request.params.dict.items()
-            req_params += request.files.dict.items()
-            for k, v in req_params:
+            req_params = request.params.dict
+            req_params.update(request.files.dict)
+            for k, v in req_params.items():
                 v = _format(v)
                 if k not in params.keys():
                     params[k] = v
